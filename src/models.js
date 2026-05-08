@@ -57,8 +57,29 @@ const clientSchema = new mongoose.Schema({
 clientSchema.index({ email: 1, appId: 1 }, { unique: true })
 clientSchema.index({ adminId: 1 })
 
-const App = mongoose.models.App || mongoose.model('App', appSchema)
-const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema)
-const Client = mongoose.models.Client || mongoose.model('Client', clientSchema)
+const bdUserSchema = new mongoose.Schema({
+  id:          { type: String, required: true, unique: true },
+  bdClientId:  { type: String, required: true },   // BD partner ka client ID
+  fullName:    { type: String, required: true },
+  email:       { type: String, required: true, lowercase: true },
+  mobile:      { type: String, required: true },
+  city:        { type: String, default: '' },
+  pincode:     { type: String, default: '' },
+  address:     { type: String, default: '' },
+  imageKey:    { type: String, default: '' },
+  accountType: { type: String, default: 'New' },
+  dob:         { type: String, default: '' },
+  profession:  { type: String, default: '' },
+  passwordHash:{ type: String, required: true },
+  createdAt:   { type: String, required: true },
+})
 
-module.exports = { App, Admin, Client }
+bdUserSchema.index({ email: 1, bdClientId: 1 }, { unique: true })
+bdUserSchema.index({ bdClientId: 1 })
+
+const App    = mongoose.models.App    || mongoose.model('App',    appSchema)
+const Admin  = mongoose.models.Admin  || mongoose.model('Admin',  adminSchema)
+const Client = mongoose.models.Client || mongoose.model('Client', clientSchema)
+const BdUser = mongoose.models.BdUser || mongoose.model('BdUser', bdUserSchema)
+
+module.exports = { App, Admin, Client, BdUser }

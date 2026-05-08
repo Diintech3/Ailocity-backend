@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const mongoose = require('mongoose')
-const { App, Admin, Client } = require('./models')
+const { App, Admin, Client, BdUser } = require('./models')
 const log = require('./logger')
 
 const defaultApps = [
@@ -176,6 +176,47 @@ async function deleteOne(collection, id) {
   if (collection === 'client') await Client.deleteOne({ id })
   else if (collection === 'admin') await Admin.deleteOne({ id })
   else if (collection === 'app') await App.deleteOne({ id })
+  else if (collection === 'bduser') await BdUser.deleteOne({ id })
+}
+
+// ── BdUser CRUD ──────────────────────────────────────────────────────────────
+
+function docToBdUser(doc) {
+  if (!doc) return null
+  const u = doc.toObject ? doc.toObject() : doc
+  return {
+    id:          u.id,
+    bdClientId:  u.bdClientId,
+    fullName:    u.fullName,
+    email:       u.email,
+    mobile:      u.mobile,
+    city:        u.city        ?? '',
+    pincode:     u.pincode     ?? '',
+    address:     u.address     ?? '',
+    imageKey:    u.imageKey    ?? '',
+    accountType: u.accountType ?? 'New',
+    dob:         u.dob         ?? '',
+    profession:  u.profession  ?? '',
+    passwordHash:u.passwordHash,
+    createdAt:   u.createdAt,
+  }
+}
+
+async function getBdUsers(bdClientId) {
+  const docs = await BdUser.find({ bdClientId }).lean()
+  return docs.map(docToBdUser)
+}
+
+async function persistBdUser(data) {
+  await BdUser.findOneAndUpdate(
+    { id: data.id },
+    data,
+    { upsert: true, setDefaultsOnInsert: true }
+  )
+}
+
+async function deleteBdUser(id) {
+  await BdUser.deleteOne({ id })
 }
 
 function genId(prefix) {
@@ -241,4 +282,7 @@ module.exports = {
   defaultApps,
   seedAndMigrate,
   redactMongoUri,
+  getBdUsers,
+  persistBdUser,
+  deleteBdUser,
 }
