@@ -75,6 +75,8 @@ router.get('/me', async (req, res) => {
     creditsBalance: c.creditsBalance,
     source: c.source || '',
     owner: c.owner || '',
+    totalCalls: c.totalCalls ?? 0,
+    activeAgentsCount: c.activeAgentsCount ?? 0,
   })
 })
 
@@ -148,62 +150,179 @@ router.get('/services', async (req, res) => {
   if (!c) return res.status(404).json({ error: 'Client not found' })
   res.json({ services: c.portalServices || [] })
 })
+
 router.post('/services', async (req, res) => {
   const b = req.body || {}
   if (!b.name?.trim()) return res.status(400).json({ error: 'name is required' })
-  const item = { id: genId('svc'), name: b.name.trim(), description: b.description?.trim() || '', price: b.price || '', status: b.status || 'active', createdAt: new Date().toISOString() }
+  
+  const item = {
+    id: genId('svc'),
+    name: b.name.trim(),
+    description: b.description?.trim() || '',
+    price: b.price?.trim() || '',
+    status: b.status || 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
   await patchClient(req, (c) => ({ ...c, portalServices: [...(c.portalServices || []), item] }))
   res.status(201).json({ service: item })
 })
+
+router.get('/services/:sid', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  const service = (c.portalServices || []).find((s) => s.id === req.params.sid)
+  if (!service) return res.status(404).json({ error: 'Service not found' })
+  res.json({ service })
+})
+
 router.patch('/services/:sid', async (req, res) => {
   const b = req.body || {}
   let found = null
+  
   await patchClient(req, (c) => {
     const list = (c.portalServices || []).map((s) => {
       if (s.id !== req.params.sid) return s
-      found = { ...s, ...b, id: s.id }
+      found = {
+        ...s,
+        ...(b.name?.trim() ? { name: b.name.trim() } : {}),
+        ...(b.description !== undefined ? { description: b.description.trim() } : {}),
+        ...(b.price !== undefined ? { price: b.price.trim() } : {}),
+        ...(b.status ? { status: b.status } : {}),
+        updatedAt: new Date().toISOString()
+      }
       return found
     })
     return { ...c, portalServices: list }
   })
-  if (!found) return res.status(404).json({ error: 'Not found' })
+  
+  if (!found) return res.status(404).json({ error: 'Service not found' })
   res.json({ service: found })
 })
+
 router.delete('/services/:sid', async (req, res) => {
-  await patchClient(req, (c) => ({ ...c, portalServices: (c.portalServices || []).filter((s) => s.id !== req.params.sid) }))
-  res.json({ ok: true })
+  let deleted = null
+  await patchClient(req, (c) => {
+    deleted = (c.portalServices || []).find((s) => s.id === req.params.sid)
+    return { ...c, portalServices: (c.portalServices || []).filter((s) => s.id !== req.params.sid) }
+  })
+  if (!deleted) return res.status(404).json({ error: 'Service not found' })
+  res.json({ ok: true, message: 'Service deleted successfully' })
 })
 
 // ── Products ─────────────────────────────────────────────────────────────────
 router.get('/products', async (req, res) => {
   const c = await myClient(req)
   if (!c) return res.status(404).json({ error: 'Client not found' })
-  res.json({ products: c.portalProducts || [] })
+  const products = c.portalProducts || []
+  // Generate presigned URLs for product images
+  const withUrls = await Promise.all(
+    products.map(async (p) => {
+      if (!p.imageKey) return p
+      try {
+        const imageUrl = await getPresignedUrl(p.imageKey)
+        return { ...p, imageUrl }
+      } catch {
+        return p
+      }
+    })
+  )
+  res.json({ products: withUrls })
 })
+
 router.post('/products', async (req, res) => {
   const b = req.body || {}
   if (!b.name?.trim()) return res.status(400).json({ error: 'name is required' })
-  const item = { id: genId('prd'), name: b.name.trim(), description: b.description?.trim() || '', price: b.price || '', category: b.category?.trim() || '', status: b.status || 'active', createdAt: new Date().toISOString() }
+  
+  const item = {
+    id: genId('prd'),
+    name: b.name.trim(),
+    description: b.description?.trim() || '',
+    price: b.price?.trim() || '',
+    category: b.category?.trim() || '',
+    imageKey: b.imageKey?.trim() || '',
+    status: b.status || 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  
   await patchClient(req, (c) => ({ ...c, portalProducts: [...(c.portalProducts || []), item] }))
-  res.status(201).json({ product: item })
+  
+  // Return with presigned URL if image exists
+  let responseItem = item
+  if (item.imageKey) {
+    try {
+      const imageUrl = await getPresignedUrl(item.imageKey)
+      responseItem = { ...item, imageUrl }
+    } catch {}
+  }
+  
+  res.status(201).json({ product: responseItem })
 })
+
+router.get('/products/:pid', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  const product = (c.portalProducts || []).find((p) => p.id === req.params.pid)
+  if (!product) return res.status(404).json({ error: 'Product not found' })
+  
+  // Generate presigned URL for image
+  let responseProduct = product
+  if (product.imageKey) {
+    try {
+      const imageUrl = await getPresignedUrl(product.imageKey)
+      responseProduct = { ...product, imageUrl }
+    } catch {}
+  }
+  
+  res.json({ product: responseProduct })
+})
+
 router.patch('/products/:pid', async (req, res) => {
   const b = req.body || {}
   let found = null
+  
   await patchClient(req, (c) => {
     const list = (c.portalProducts || []).map((p) => {
       if (p.id !== req.params.pid) return p
-      found = { ...p, ...b, id: p.id }
+      found = {
+        ...p,
+        ...(b.name?.trim() ? { name: b.name.trim() } : {}),
+        ...(b.description !== undefined ? { description: b.description.trim() } : {}),
+        ...(b.price !== undefined ? { price: b.price.trim() } : {}),
+        ...(b.category !== undefined ? { category: b.category.trim() } : {}),
+        ...(b.imageKey !== undefined ? { imageKey: b.imageKey.trim() } : {}),
+        ...(b.status ? { status: b.status } : {}),
+        updatedAt: new Date().toISOString()
+      }
       return found
     })
     return { ...c, portalProducts: list }
   })
-  if (!found) return res.status(404).json({ error: 'Not found' })
-  res.json({ product: found })
+  
+  if (!found) return res.status(404).json({ error: 'Product not found' })
+  
+  // Return with presigned URL if image exists
+  let responseProduct = found
+  if (found.imageKey) {
+    try {
+      const imageUrl = await getPresignedUrl(found.imageKey)
+      responseProduct = { ...found, imageUrl }
+    } catch {}
+  }
+  
+  res.json({ product: responseProduct })
 })
+
 router.delete('/products/:pid', async (req, res) => {
-  await patchClient(req, (c) => ({ ...c, portalProducts: (c.portalProducts || []).filter((p) => p.id !== req.params.pid) }))
-  res.json({ ok: true })
+  let deleted = null
+  await patchClient(req, (c) => {
+    deleted = (c.portalProducts || []).find((p) => p.id === req.params.pid)
+    return { ...c, portalProducts: (c.portalProducts || []).filter((p) => p.id !== req.params.pid) }
+  })
+  if (!deleted) return res.status(404).json({ error: 'Product not found' })
+  res.json({ ok: true, message: 'Product deleted successfully' })
 })
 
 // ── Contacts (Clients tab) ────────────────────────────────────────────────────
@@ -296,6 +415,7 @@ router.post('/contacts', async (req, res) => {
     youtubeUrl: b.youtubeUrl?.trim() || '',
     logoKey: b.logoKey?.trim() || '',
     type: b.type || 'client',
+    mbcSubCategory: b.mbcSubCategory?.trim() || '',
     status: b.status || 'active',
     notes: b.notes?.trim() || '',
     createdAt: new Date().toISOString(),
@@ -406,6 +526,34 @@ router.patch('/contacts/:cid', async (req, res) => {
   if (!found) return res.status(404).json({ error: 'Not found' })
   res.json({ contact: found })
 })
+router.patch('/contacts/:cid/kyc', async (req, res) => {
+  const { kyc } = req.body || {}
+  if (!['verified', 'rejected', 'pending'].includes(kyc)) return res.status(400).json({ error: 'Invalid kyc value' })
+  let found = null
+  const me = await myClient(req)
+  if (!me) return res.status(404).json({ error: 'Client not found' })
+
+  // Update contact kyc
+  await patchClient(req, (c) => {
+    const list = (c.portalContacts || []).map((x) => {
+      if (x.id !== req.params.cid) return x
+      found = { ...x, kyc }
+      return found
+    })
+    return { ...c, portalContacts: list }
+  })
+  if (!found) return res.status(404).json({ error: 'Contact not found' })
+
+  // Also update linked client's kyc if exists
+  if (found.refClientId) {
+    const { clients } = await getState()
+    const linked = clients.find(x => x.id === found.refClientId)
+    if (linked) await persistOne('client', linked.id, { ...linked, kyc })
+  }
+
+  res.json({ ok: true, kyc })
+})
+
 router.delete('/contacts/:cid', async (req, res) => {
   await patchClient(req, (c) => ({ ...c, portalContacts: (c.portalContacts || []).filter((x) => x.id !== req.params.cid) }))
   res.json({ ok: true })
@@ -415,14 +563,56 @@ router.delete('/contacts/:cid', async (req, res) => {
 router.get('/datastore', async (req, res) => {
   const c = await myClient(req)
   if (!c) return res.status(404).json({ error: 'Client not found' })
-  res.json({ files: c.portalDataStore || [] })
+  const items = c.portalDataStore || []
+  const withUrls = await Promise.all(
+    items.map(async (x) => {
+      if (!x.fileKey) return x
+      try {
+        const fileUrl = await getPresignedUrl(x.fileKey)
+        return { ...x, fileUrl }
+      } catch {
+        return x
+      }
+    })
+  )
+  res.json({ items: withUrls })
 })
 router.post('/datastore', async (req, res) => {
   const b = req.body || {}
-  if (!b.name?.trim()) return res.status(400).json({ error: 'name is required' })
-  const item = { id: genId('ds'), name: b.name.trim(), type: b.type?.trim() || 'file', size: b.size || '', url: b.url?.trim() || '', key: b.key?.trim() || '', tags: b.tags || [], createdAt: new Date().toISOString() }
+  if (!b.title?.trim()) return res.status(400).json({ error: 'title is required' })
+  if (!b.type?.trim()) return res.status(400).json({ error: 'type is required' })
+  
+  const validTypes = ['file', 'image', 'video', 'pdf', 'url', 'website', 'youtube', 'text', 'File Upload', 'Website', 'Youtube', 'URLs', 'Text', 'AI Guidelines']
+  const typeNormalized = b.type.trim().toLowerCase()
+  
+  const item = {
+    id: genId('ds'),
+    type: b.type.trim(),
+    title: b.title.trim(),
+    description: b.description?.trim() || '',
+    url: b.url?.trim() || '',
+    fileKey: b.fileKey?.trim() || '',
+    fileName: b.fileName?.trim() || '',
+    fileSize: b.fileSize || 0,
+    mimeType: b.mimeType?.trim() || '',
+    createdAt: new Date().toISOString()
+  }
   await patchClient(req, (c) => ({ ...c, portalDataStore: [...(c.portalDataStore || []), item] }))
-  res.status(201).json({ file: item })
+  res.status(201).json({ item })
+})
+router.patch('/datastore/:did', async (req, res) => {
+  const b = req.body || {}
+  let found = null
+  await patchClient(req, (c) => {
+    const list = (c.portalDataStore || []).map((x) => {
+      if (x.id !== req.params.did) return x
+      found = { ...x, ...b, id: x.id }
+      return found
+    })
+    return { ...c, portalDataStore: list }
+  })
+  if (!found) return res.status(404).json({ error: 'Not found' })
+  res.json({ item: found })
 })
 router.delete('/datastore/:did', async (req, res) => {
   await patchClient(req, (c) => ({ ...c, portalDataStore: (c.portalDataStore || []).filter((f) => f.id !== req.params.did) }))
