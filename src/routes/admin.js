@@ -1,7 +1,7 @@
 const express = require('express')
 const bcrypt = require('bcryptjs')
 const multer = require('multer')
-const { getState, persist, persistOne, deleteOne, genId } = require('../store')
+const { getState, persist, persistOne, deleteOne, genId, getTerritoryTree, createState, createCity, createRegion, createPod, getStates, getCitiesByState, getRegionsByCity, getPodsByRegion, getPodClientCount } = require('../store')
 const { requireAuth } = require('../middleware/requireAuth')
 const { sign } = require('../auth')
 const { uploadToR2, getPresignedUrl } = require('../r2')
@@ -229,7 +229,7 @@ router.patch('/apps/:id', async (req, res) => {
       ? { status: b.status }
       : {}),
     ...(Number.isFinite(Number(b.creditsBalance)) ? { creditsBalance: Number(b.creditsBalance) } : {}),
-    ...(['ailocity', 'ailocity-bd', 'ailocity-business'].includes(b.appId) ? { appId: b.appId } : {}),
+    ...(['ailocity', 'ailocity-bd', 'ailocity-business', 'ailocity-tc'].includes(b.appId) ? { appId: b.appId } : {}),
   }
   await persistOne('client', next.id, next)
   res.json({ client: publicClientRow(next) })
@@ -249,7 +249,7 @@ router.post('/apps/:id/impersonate', async (req, res) => {
   const state = await getState()
   const client = state.clients.find((c) => c.id === req.params.id && c.adminId === adminId)
   if (!client) return res.status(404).json({ error: 'Client not found' })
-  const APP_ROLE = { 'ailocity': 'app', 'ailocity-business': 'business', 'ailocity-bd': 'bd' }
+  const APP_ROLE = { 'ailocity': 'app', 'ailocity-business': 'business', 'ailocity-bd': 'bd', 'ailocity-tc': 'app' }
   const token = sign({
     role: APP_ROLE[client.appId] || 'app',
     sub: client.id,
@@ -261,6 +261,137 @@ router.post('/apps/:id/impersonate', async (req, res) => {
     source: client.source || 'Direct',
   })
   res.json({ token })
+})
+
+// ── Territory Management APIs ────────────────────────────────────────────────────────────
+
+// GET full territory tree
+router.get('/territories', async (req, res) => {
+  try {
+    const tree = await getTerritoryTree()
+    res.json({ states: tree })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET all states
+router.get('/territories/states', async (req, res) => {
+  try {
+    const states = await getStates()
+    res.json({ states })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST create state
+router.post('/territories/states', async (req, res) => {
+  try {
+    const { name, code } = req.body
+    if (!name?.trim()) return res.status(400).json({ error: 'name is required' })
+    const data = { id: genId('st'), name: name.trim(), code: (code || '').trim().toUpperCase(), isActive: true, createdAt: new Date().toISOString() }
+    await createState(data)
+    res.json({ state: data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET cities by state
+router.get('/territories/cities', async (req, res) => {
+  try {
+    const { stateId } = req.query
+    if (!stateId) return res.status(400).json({ error: 'stateId is required' })
+    const cities = await getCitiesByState(stateId)
+    res.json({ cities })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST create city
+router.post('/territories/cities', async (req, res) => {
+  try {
+    const { stateId, name } = req.body
+    if (!stateId || !name?.trim()) return res.status(400).json({ error: 'stateId and name are required' })
+    const data = { id: genId('ct'), stateId, name: name.trim(), isActive: true, createdAt: new Date().toISOString() }
+    await createCity(data)
+    res.json({ city: data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET regions by city
+router.get('/territories/regions', async (req, res) => {
+  try {
+    const { cityId } = req.query
+    if (!cityId) return res.status(400).json({ error: 'cityId is required' })
+    const regions = await getRegionsByCity(cityId)
+    res.json({ regions })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST create region
+router.post('/territories/regions', async (req, res) => {
+  try {
+    const { stateId, cityId, name } = req.body
+    if (!stateId || !cityId || !name?.trim()) return res.status(400).json({ error: 'stateId, cityId and name are required' })
+    const validRegions = ['North', 'South', 'East', 'West', 'Central']
+    if (!validRegions.includes(name)) return res.status(400).json({ error: `name must be one of: ${validRegions.join(', ')}` })
+    const data = { id: genId('rg'), stateId, cityId, name, isActive: true, createdAt: new Date().toISOString() }
+    await createRegion(data)
+    res.json({ region: data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET pods by region
+router.get('/territories/pods', async (req, res) => {
+  try {
+    const { regionId } = req.query
+    if (!regionId) return res.status(400).json({ error: 'regionId is required' })
+    const pods = await getPodsByRegion(regionId)
+    res.json({ pods })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST create POD
+router.post('/territories/pods', async (req, res) => {
+  try {
+    const { stateId, cityId, regionId, podNumber, podName, capacity } = req.body
+    if (!stateId || !cityId || !regionId || !podNumber?.trim() || !podName?.trim())
+      return res.status(400).json({ error: 'stateId, cityId, regionId, podNumber and podName are required' })
+    const data = {
+      id: genId('pd'),
+      stateId, cityId, regionId,
+      podNumber: podNumber.trim().toUpperCase(),
+      podName: podName.trim(),
+      capacity: capacity || 100,
+      isActive: true,
+      createdAt: new Date().toISOString()
+    }
+    await createPod(data)
+    res.json({ pod: data })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET POD client count
+router.get('/territories/pods/:podId/clients/count', async (req, res) => {
+  try {
+    const count = await getPodClientCount(req.params.podId)
+    res.json({ count })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 module.exports = router

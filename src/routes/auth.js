@@ -90,6 +90,7 @@ router.post('/client/login', async (req, res) => {
     'ailocity':          'app',
     'ailocity-business': 'business',
     'ailocity-bd':       'bd',
+    'ailocity-tc':       'app',
   }
   const role = APP_ROLE[client.appId] || 'app'
 

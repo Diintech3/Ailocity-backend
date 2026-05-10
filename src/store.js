@@ -1,13 +1,14 @@
 const fs = require('fs')
 const path = require('path')
 const mongoose = require('mongoose')
-const { App, Admin, Client, BdUser } = require('./models')
+const { App, Admin, Client, BdUser, State, City, Region, Pod } = require('./models')
 const log = require('./logger')
 
 const defaultApps = [
   { id: 'ailocity', name: 'Ailocity' },
   { id: 'ailocity-bd', name: 'Ailocity BD' },
   { id: 'ailocity-business', name: 'Ailocity Business' },
+  { id: 'ailocity-tc', name: 'Ailocity TC' },
 ]
 
 const JSON_LEGACY_PATH = path.join(__dirname, '..', 'data', 'db.json')
@@ -54,6 +55,7 @@ function docToClient(doc) {
     totalCalls: c.totalCalls ?? 0,
     activeAgentsCount: c.activeAgentsCount ?? 0,
     createdAt: c.createdAt,
+    territory: c.territory || {},
     portalAgents: Array.isArray(c.portalAgents) ? c.portalAgents : [],
     portalTickets: Array.isArray(c.portalTickets) ? c.portalTickets : [],
     usageStats: Array.isArray(c.usageStats) ? c.usageStats : [],
@@ -65,6 +67,11 @@ function docToClient(doc) {
     portalCampaigns: Array.isArray(c.portalCampaigns) ? c.portalCampaigns : [],
     portalContent: Array.isArray(c.portalContent) ? c.portalContent : [],
     portalReels: Array.isArray(c.portalReels) ? c.portalReels : [],
+    portalMeetings: Array.isArray(c.portalMeetings) ? c.portalMeetings : [],
+    portalDialReports: Array.isArray(c.portalDialReports) ? c.portalDialReports : [],
+    portalDialCalls: Array.isArray(c.portalDialCalls) ? c.portalDialCalls : [],
+    portalTcTrainings: Array.isArray(c.portalTcTrainings) ? c.portalTcTrainings : [],
+    portalAICalls: Array.isArray(c.portalAICalls) ? c.portalAICalls : [],
   }
 }
 
@@ -136,6 +143,7 @@ function toClientInsert(c) {
     totalCalls: c.totalCalls ?? 0,
     activeAgentsCount: c.activeAgentsCount ?? 0,
     createdAt: c.createdAt,
+    territory: c.territory || {},
     portalAgents: c.portalAgents || [],
     portalTickets: c.portalTickets || [],
     usageStats: c.usageStats || [],
@@ -147,6 +155,11 @@ function toClientInsert(c) {
     portalCampaigns: c.portalCampaigns || [],
     portalContent: c.portalContent || [],
     portalReels: c.portalReels || [],
+    portalMeetings: c.portalMeetings || [],
+    portalDialReports: c.portalDialReports || [],
+    portalDialCalls: c.portalDialCalls || [],
+    portalTcTrainings: c.portalTcTrainings || [],
+    portalAICalls: c.portalAICalls || [],
   }
 }
 
@@ -246,10 +259,11 @@ async function migrateFromLegacyJsonIfEmpty() {
 }
 
 async function seedDefaultAppsIfEmpty() {
-  const count = await App.countDocuments()
-  if (count > 0) return
-  await App.insertMany([...defaultApps])
-  log.info('Default application catalog written')
+  // Upsert all default apps so new entries are added even if DB already has data
+  await Promise.all(
+    defaultApps.map((a) => App.findOneAndUpdate({ id: a.id }, { id: a.id, name: a.name }, { upsert: true }))
+  )
+  log.info('Default application catalog synced')
 }
 
 async function seedAndMigrate() {
@@ -272,6 +286,80 @@ function redactMongoUri(uri) {
   }
 }
 
+// ── Territory CRUD ────────────────────────────────────────────────────────────
+
+// Get full territory tree: states → cities → regions → pods
+async function getTerritoryTree() {
+  const [states, cities, regions, pods] = await Promise.all([
+    State.find({ isActive: true }).lean(),
+    City.find({ isActive: true }).lean(),
+    Region.find({ isActive: true }).lean(),
+    Pod.find({ isActive: true }).lean(),
+  ])
+
+  return states.map(s => ({
+    id: s.id,
+    name: s.name,
+    code: s.code || '',
+    cities: cities
+      .filter(c => c.stateId === s.id)
+      .map(c => ({
+        id: c.id,
+        name: c.name,
+        regions: regions
+          .filter(r => r.cityId === c.id)
+          .map(r => ({
+            id: r.id,
+            name: r.name,
+            pods: pods
+              .filter(p => p.regionId === r.id)
+              .map(p => ({
+                id: p.id,
+                podNumber: p.podNumber,
+                podName: p.podName,
+                capacity: p.capacity,
+              }))
+          }))
+      }))
+  }))
+}
+
+async function createState(data) {
+  await State.findOneAndUpdate({ id: data.id }, data, { upsert: true, setDefaultsOnInsert: true })
+}
+
+async function createCity(data) {
+  await City.findOneAndUpdate({ id: data.id }, data, { upsert: true, setDefaultsOnInsert: true })
+}
+
+async function createRegion(data) {
+  await Region.findOneAndUpdate({ id: data.id }, data, { upsert: true, setDefaultsOnInsert: true })
+}
+
+async function createPod(data) {
+  await Pod.findOneAndUpdate({ id: data.id }, data, { upsert: true, setDefaultsOnInsert: true })
+}
+
+async function getStates() {
+  return State.find({ isActive: true }).lean()
+}
+
+async function getCitiesByState(stateId) {
+  return City.find({ stateId, isActive: true }).lean()
+}
+
+async function getRegionsByCity(cityId) {
+  return Region.find({ cityId, isActive: true }).lean()
+}
+
+async function getPodsByRegion(regionId) {
+  return Pod.find({ regionId, isActive: true }).lean()
+}
+
+async function getPodClientCount(podId) {
+  return Client.countDocuments({ 'territory.podId': podId })
+}
+
 module.exports = {
   connectMongo,
   getState,
@@ -285,4 +373,15 @@ module.exports = {
   getBdUsers,
   persistBdUser,
   deleteBdUser,
+  // Territory
+  getTerritoryTree,
+  createState,
+  createCity,
+  createRegion,
+  createPod,
+  getStates,
+  getCitiesByState,
+  getRegionsByCity,
+  getPodsByRegion,
+  getPodClientCount,
 }

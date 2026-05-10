@@ -67,7 +67,7 @@ function registerRoutes(app) {
   app.use('/api/auth',        require('./src/routes/auth'))
   app.use('/api/superadmin',  require('./src/routes/superadmin'))
   app.use('/api/admin',       require('./src/routes/admin'))
-  app.use('/api/client',      require('./src/routes/clientPortal'))
+  app.use('/api/business',      require('./src/routes/businessPortal'))
   app.use('/api/bd',          require('./src/routes/bdPortal'))
 }
 
