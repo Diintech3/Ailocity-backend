@@ -31,6 +31,7 @@ function publicUser(u) {
     accountType: u.accountType,
     dob:         u.dob,
     profession:  u.profession,
+    role:        u.role ?? 'bd user',
     createdAt:   u.createdAt,
   }
 }
@@ -108,7 +109,7 @@ router.get('/users', async (req, res) => {
       return u
     }
   }))
-  res.json({ users: withUrls })
+  res.json({ bdUsers: withUrls })
 })
 
 // ── Meetings assigned to this BD ────────────────────────────────────────────
@@ -116,12 +117,16 @@ router.get('/meetings', async (req, res) => {
   const c = await myBDClient(req)
   if (!c) return res.status(404).json({ error: 'BD client not found' })
   const { clients } = await getState()
-  // Collect all meetings across all TC clients under same admin where assignBdId === this BD client id
+  const { getBdUsers } = require('../store')
+  // Collect meetings assigned to this BD client OR any of its BD users
+  const myBdUserIds = new Set([c.id])
+  const bdUsers = await getBdUsers(c.id)
+  bdUsers.forEach(u => myBdUserIds.add(u.id))
   const meetings = []
   for (const cl of clients) {
     if (cl.adminId !== c.adminId) continue
     for (const m of (cl.portalMeetings || [])) {
-      if (m.assignBdId === c.id) meetings.push(m)
+      if (myBdUserIds.has(m.assignBdId)) meetings.push(m)
     }
   }
   meetings.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
@@ -197,6 +202,7 @@ router.post('/users', async (req, res) => {
     accountType:  b.accountType        || 'New',
     dob:          b.dob                || '',
     profession:   b.profession?.trim() || '',
+    role:         b.role?.trim()        || 'bd user',
     passwordHash: bcrypt.hashSync(b.password, 10),
     createdAt:    new Date().toISOString(),
   }
@@ -226,6 +232,7 @@ router.patch('/users/:uid', async (req, res) => {
     ...(b.accountType         ? { accountType: b.accountType }        : {}),
     ...(b.dob !== undefined   ? { dob:         b.dob }                : {}),
     ...(b.profession !== undefined ? { profession: String(b.profession).trim() } : {}),
+    ...(b.role !== undefined  ? { role:        String(b.role).trim() } : {}),
     ...(b.password            ? { passwordHash: bcrypt.hashSync(b.password, 10) } : {}),
   }
 

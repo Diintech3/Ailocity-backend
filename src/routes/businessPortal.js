@@ -8,10 +8,31 @@ const { sign } = require('../auth')
 
 const { sendMeetingEmail, meetingEmailHtml } = require('../email')
 
+// ── Groq AI ──────────────────────────────────────────────────────────────────
+const Groq = require('groq-sdk')
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+
+const CATEGORY_MAP = {
+  'Real Estate': ['Residential','Commercial','Plots','Rental'],
+  'Healthcare': ['Hospital','Clinic','Pharmacy','Lab'],
+  'Education': ['School','College','Coaching','Online'],
+  'Retail': ['Grocery','Fashion','Electronics','General'],
+  'Restaurant / Food': ['Restaurant','Cafe','Cloud Kitchen','Catering'],
+  'IT / Software': ['Web Dev','App Dev','SaaS','Agency'],
+  'Finance': ['CA','Insurance','Loans','Investment'],
+  'Manufacturing': ['FMCG','Industrial','Textile','Auto Parts'],
+  'Logistics': ['Transport','Courier','Warehouse'],
+  'Salon / Beauty': ['Salon','Spa','Makeup','Skincare'],
+  'Gym / Fitness': ['Gym','Yoga','Sports','Nutrition'],
+  'Legal': ['Advocate','Law Firm','Compliance'],
+  'Travel': ['Tour Operator','Hotel','Visa','Cab'],
+  'Automobile': ['Showroom','Service Center','Spare Parts'],
+  'Other': ['Other'],
+}
+
 const router = express.Router()
 router.use(requireAuth(['app', 'business']))
 
-// appId guard ab zaroorat nahi — role hi isolate karta hai
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 
@@ -38,9 +59,11 @@ router.get('/presigned-url', async (req, res) => {
   }
 })
 
+
+
 async function myClient(req) {
-  const { clients } = await getState()
-  return clients.find((c) => c.id === req.user.sub)
+  const state = await getState()
+  return state.clients.find((c) => c.id === req.user.sub) || null
 }
 
 async function patchClient(req, updater) {
@@ -270,7 +293,7 @@ router.get('/products', async (req, res) => {
   const c = await myClient(req)
   if (!c) return res.status(404).json({ error: 'Client not found' })
   const products = c.portalProducts || []
-  // Generate presigned URLs for product images
+  // Attach presigned URLs for product images
   const withUrls = await Promise.all(
     products.map(async (p) => {
       if (!p.imageKey) return p
@@ -303,15 +326,10 @@ router.post('/products', async (req, res) => {
   
   await patchClient(req, (c) => ({ ...c, portalProducts: [...(c.portalProducts || []), item] }))
   
-  // Return with presigned URL if image exists
   let responseItem = item
   if (item.imageKey) {
-    try {
-      const imageUrl = await getPresignedUrl(item.imageKey)
-      responseItem = { ...item, imageUrl }
-    } catch {}
+    try { responseItem = { ...item, imageUrl: await getPresignedUrl(item.imageKey) } } catch {}
   }
-  
   res.status(201).json({ product: responseItem })
 })
 
@@ -321,15 +339,10 @@ router.get('/products/:pid', async (req, res) => {
   const product = (c.portalProducts || []).find((p) => p.id === req.params.pid)
   if (!product) return res.status(404).json({ error: 'Product not found' })
   
-  // Generate presigned URL for image
   let responseProduct = product
   if (product.imageKey) {
-    try {
-      const imageUrl = await getPresignedUrl(product.imageKey)
-      responseProduct = { ...product, imageUrl }
-    } catch {}
+    try { responseProduct = { ...product, imageUrl: await getPresignedUrl(product.imageKey) } } catch {}
   }
-  
   res.json({ product: responseProduct })
 })
 
@@ -357,15 +370,10 @@ router.patch('/products/:pid', async (req, res) => {
   
   if (!found) return res.status(404).json({ error: 'Product not found' })
   
-  // Return with presigned URL if image exists
   let responseProduct = found
   if (found.imageKey) {
-    try {
-      const imageUrl = await getPresignedUrl(found.imageKey)
-      responseProduct = { ...found, imageUrl }
-    } catch {}
+    try { responseProduct = { ...found, imageUrl: await getPresignedUrl(found.imageKey) } } catch {}
   }
-  
   res.json({ product: responseProduct })
 })
 
@@ -379,8 +387,8 @@ router.delete('/products/:pid', async (req, res) => {
   res.json({ ok: true, message: 'Product deleted successfully' })
 })
 
-// ── Contacts (Clients tab) ────────────────────────────────────────────────────
-/** TC portal: Business directory comes from the linked Ailocity Business client (same admin). */
+// ── Contacts ─────────────────────────────────────────────────────────────────
+/** TC portal: Business directory is merged from the linked Ailocity Business client (same admin). */
 function tcMergedContacts(tcClient, allClients) {
   const own = Array.isArray(tcClient.portalContacts) ? tcClient.portalContacts : []
   const peers = allClients.filter((x) => x.adminId === tcClient.adminId && x.id !== tcClient.id)
@@ -433,7 +441,7 @@ router.post('/contacts', async (req, res) => {
 
   let refClientId = null
 
-  // If email + password provided, register as a real client
+  // If email + password provided, register as a new client account
   if (b.email?.trim() && b.password) {
     const state = await getState()
     const existing = state.clients.find(
@@ -501,7 +509,7 @@ router.post('/contacts', async (req, res) => {
     mbcSubCategory: b.mbcSubCategory?.trim() || '',
     status: b.status || 'active',
     notes: b.notes?.trim() || '',
-    // Territory assignment — accept both nested object and flat fields
+    // Territory — accept both nested object and flat fields
     territory: b.territory && typeof b.territory === 'object' ? {
       stateId:    b.territory.stateId    || '',
       stateName:  b.territory.stateName  || '',
@@ -574,7 +582,7 @@ router.patch('/contacts/:cid', async (req, res) => {
   const me = await myClient(req)
   if (!me) return res.status(404).json({ error: 'Client not found' })
 
-  // If password provided and contact has no refClientId, register new client
+  // If password provided and contact has no refClientId, create a new client account
   if (b.password && b.email?.trim()) {
     const state = await getState()
     const contact = (me.portalContacts || []).find((x) => x.id === req.params.cid)
@@ -619,7 +627,7 @@ router.patch('/contacts/:cid', async (req, res) => {
       if (x.id !== req.params.cid) return x
       const updated = { ...x, ...b, id: x.id }
       delete updated.password
-      // Merge territory properly
+      // Merge territory
       if (b.territory && typeof b.territory === 'object') {
         updated.territory = { ...(x.territory || {}), ...b.territory }
       }
@@ -638,7 +646,6 @@ router.patch('/contacts/:cid/kyc', async (req, res) => {
   const me = await myClient(req)
   if (!me) return res.status(404).json({ error: 'Client not found' })
 
-  // Update contact kyc
   await patchClient(req, (c) => {
     const list = (c.portalContacts || []).map((x) => {
       if (x.id !== req.params.cid) return x
@@ -649,7 +656,7 @@ router.patch('/contacts/:cid/kyc', async (req, res) => {
   })
   if (!found) return res.status(404).json({ error: 'Contact not found' })
 
-  // Also update linked client's kyc if exists
+  // Sync kyc to linked client account if exists
   if (found.refClientId) {
     const { clients } = await getState()
     const linked = clients.find(x => x.id === found.refClientId)
@@ -686,9 +693,6 @@ router.post('/datastore', async (req, res) => {
   const b = req.body || {}
   if (!b.title?.trim()) return res.status(400).json({ error: 'title is required' })
   if (!b.type?.trim()) return res.status(400).json({ error: 'type is required' })
-  
-  const validTypes = ['file', 'image', 'video', 'pdf', 'url', 'website', 'youtube', 'text', 'File Upload', 'Website', 'Youtube', 'URLs', 'Text', 'AI Guidelines']
-  const typeNormalized = b.type.trim().toLowerCase()
   
   const item = {
     id: genId('ds'),
@@ -857,14 +861,22 @@ router.get('/tc-bd-assignees', async (req, res) => {
   const c = await myClient(req)
   if (!c) return res.status(404).json({ error: 'Client not found' })
   const { clients } = await getState()
-  const assignees = clients
-    .filter((x) => x.adminId === c.adminId && x.appId === 'ailocity-bd')
-    .map((x) => ({
-      id: x.id,
-      name: x.businessName || x.fullName || '',
-      email: x.email || '',
-      mobile: x.mobile || '',
-    }))
+  const { getBdUsers } = require('../store')
+  const bdClients = clients.filter((x) => x.adminId === c.adminId && x.appId === 'ailocity-bd')
+  const assignees = []
+  for (const bdClient of bdClients) {
+    const bdUsers = await getBdUsers(bdClient.id)
+    for (const u of bdUsers) {
+      assignees.push({
+        id: u.id,
+        bdClientId: bdClient.id,
+        name: u.fullName || '',
+        email: u.email || '',
+        mobile: u.mobile || '',
+        role: u.role || 'bd user',
+      })
+    }
+  }
   res.json({ assignees })
 })
 
@@ -885,8 +897,8 @@ router.get('/my-meetings', async (req, res) => {
   if (!c) return res.status(404).json({ error: 'Client not found' })
   const { clients } = await getState()
 
-  // Build a set of all contact IDs that belong to this client
-  // Search across ALL clients because sub-clients may have different adminId
+  // Build a set of all contact IDs belonging to this client
+  // Search across ALL clients since sub-clients may have different adminId
   const myContactIds = new Set()
   for (const cl of clients) {
     for (const contact of (cl.portalContacts || [])) {
@@ -900,10 +912,10 @@ router.get('/my-meetings', async (req, res) => {
     }
   }
 
-  // Collect all meetings where:
-  // 1. clientContactId OR serverContactId is in myContactIds
-  // 2. OR clientName/serverName matches fullName (fallback when contactId was not set)
-  // 3. OR contactNumber matches mobile (last resort fallback)
+  // Collect meetings where:
+  // 1. clientContactId or serverContactId is in myContactIds
+  // 2. clientName/serverName matches fullName (fallback when contactId not set)
+  // 3. contactNumber matches mobile (last resort fallback)
   const myNameLower   = (c.fullName || c.businessName || '').toLowerCase().trim()
   const myMobileTrim  = (c.mobile || '').trim()
   const meetings = []
@@ -964,13 +976,12 @@ router.post('/meetings', async (req, res) => {
     const tc = await myClient(req)
     const fmtDt = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 
-    // TC uses merged contacts (from linked business account)
-    // Normalize contacts so every entry has both `id` and `businessId` fields
+    // Merge contacts for TC portal; ensure every entry has both `id` and `businessId`
     let rawContacts = tc?.portalContacts || []
     if (tc?.appId === 'ailocity-tc') {
       rawContacts = tcMergedContacts(tc, clients)
     }
-    // Ensure businessId is always set (mirrors what GET /contacts does)
+    // Ensure businessId is always set (mirrors GET /contacts response)
     const allContacts = rawContacts.map(x => ({ ...x, businessId: x.businessId || x.id }))
 
     console.log('[Meeting Email] allContacts count:', allContacts.length)
@@ -1033,12 +1044,29 @@ router.post('/meetings', async (req, res) => {
 
     // Email to BD
     if (notifyBd && item.assignBdId) {
-      const bdClient = clients.find(x => x.id === item.assignBdId)
-      console.log('[Meeting Email] BD client found:', bdClient?.businessName, '| email:', bdClient?.email)
-      if (bdClient?.email) {
+      // assignBdId is either a BD client id or a BD user id (BDU_ prefix)
+      const { getBdUsers } = require('../store')
+      let bdEmail = null
+      let bdName = null
+      if (item.assignBdId.startsWith('BDU_')) {
+        // BD user — search across all BD clients
+        const bdClients = clients.filter(x => x.appId === 'ailocity-bd')
+        for (const bdCl of bdClients) {
+          const bdUsers = await getBdUsers(bdCl.id)
+          const bdUser = bdUsers.find(u => u.id === item.assignBdId)
+          if (bdUser) { bdEmail = bdUser.email; bdName = bdUser.fullName; break }
+        }
+      } else {
+        // BD client
+        const bdClient = clients.find(x => x.id === item.assignBdId)
+        bdEmail = bdClient?.email
+        bdName = bdClient?.businessName || bdClient?.fullName
+      }
+      console.log('[Meeting Email] BD assignee found:', bdName, '| email:', bdEmail)
+      if (bdEmail) {
         await sendMeetingEmail({
-          to: bdClient.email,
-          toName: bdClient.businessName || bdClient.fullName,
+          to: bdEmail,
+          toName: bdName,
           subject: `Meeting Assigned: ${item.agenda}`,
           html: meetingEmailHtml({ title: 'Meeting Assigned to You', rows: commonRows, note: item.noteForBd }),
         })
@@ -1335,6 +1363,42 @@ router.delete('/ai-calls/:aid', async (req, res) => {
   })
   if (!ok) return res.status(404).json({ error: 'AI call not found' })
   res.json({ ok: true })
+})
+
+// ── AI Auto-fill for Add Business form ───────────────────────────────────────
+router.post('/ai-fill', async (req, res) => {
+  const { prompt } = req.body || {}
+  if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' })
+  const categoryList = Object.keys(CATEGORY_MAP).join(', ')
+  const systemPrompt = `You are a business data extraction assistant for an Indian CRM.
+Extract structured business info from user input and return ONLY valid JSON.
+Categories: ${categoryList}
+Sub-categories: ${JSON.stringify(CATEGORY_MAP)}
+Business types: Proprietorship, Partnership, Pvt Ltd, LLP, Other
+MBC type: client or server
+MBC sub-category: Startup - Inhouse, Startup - Outside, MSME, Big Enterprise, PSU, Others
+Return ONLY this JSON (empty string if unknown):
+{"name":"","company":"","businessType":"","category":"","subCategory":"","email":"","mobile":"","alternateMobile":"","websiteUrl":"","gstNumber":"","panNumber":"","address":"","city":"","state":"","pincode":"","country":"India","instagramUrl":"","facebookUrl":"","youtubeUrl":"","type":"client","mbcSubCategory":"","status":"active","notes":""}
+Return ONLY the JSON, no explanation.`
+  try {
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt.trim() },
+      ],
+      temperature: 0.2,
+      max_tokens: 1024,
+    })
+    const text = completion.choices[0]?.message?.content || '{}'
+    const jsonMatch = text.match(/{[\s\S]*}/)
+    if (!jsonMatch) return res.status(422).json({ error: 'Could not parse AI response' })
+    const data = JSON.parse(jsonMatch[0])
+    res.json({ data })
+  } catch (err) {
+    console.error('[AI Fill]', err?.message)
+    res.status(500).json({ error: err?.message || 'AI fill failed' })
+  }
 })
 
 module.exports = router

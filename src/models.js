@@ -134,6 +134,7 @@ const bdUserSchema = new mongoose.Schema({
   accountType: { type: String, default: 'New' },
   dob:         { type: String, default: '' },
   profession:  { type: String, default: '' },
+  role:        { type: String, default: 'bd user' },
   passwordHash:{ type: String, required: true },
   createdAt:   { type: String, required: true },
 })

@@ -210,6 +210,7 @@ function docToBdUser(doc) {
     accountType: u.accountType ?? 'New',
     dob:         u.dob         ?? '',
     profession:  u.profession  ?? '',
+    role:        u.role        ?? 'bd user',
     passwordHash:u.passwordHash,
     createdAt:   u.createdAt,
   }
