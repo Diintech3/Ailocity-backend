@@ -111,6 +111,23 @@ router.get('/users', async (req, res) => {
   res.json({ users: withUrls })
 })
 
+// ── Meetings assigned to this BD ────────────────────────────────────────────
+router.get('/meetings', async (req, res) => {
+  const c = await myBDClient(req)
+  if (!c) return res.status(404).json({ error: 'BD client not found' })
+  const { clients } = await getState()
+  // Collect all meetings across all TC clients under same admin where assignBdId === this BD client id
+  const meetings = []
+  for (const cl of clients) {
+    if (cl.adminId !== c.adminId) continue
+    for (const m of (cl.portalMeetings || [])) {
+      if (m.assignBdId === c.id) meetings.push(m)
+    }
+  }
+  meetings.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  res.json({ meetings })
+})
+
 // ── Business (Client/Server contacts) ─────────────────────────────────────────
 // BD dashboard "Business" tab reads portalContacts from the Ailocity Business
 // client that shares the same adminId as this BD client.

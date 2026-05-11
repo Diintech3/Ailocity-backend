@@ -6,6 +6,8 @@ const { requireAuth } = require('../middleware/requireAuth')
 const { uploadToR2, getPresignedUrl } = require('../r2')
 const { sign } = require('../auth')
 
+const { sendMeetingEmail, meetingEmailHtml } = require('../email')
+
 const router = express.Router()
 router.use(requireAuth(['app', 'business']))
 
@@ -877,6 +879,53 @@ router.get('/meetings', async (req, res) => {
   res.json({ meetings: c.portalMeetings || [] })
 })
 
+// GET meetings where this client is the invited client contact
+router.get('/my-meetings', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  const { clients } = await getState()
+
+  // Build a set of all contact IDs that belong to this client
+  // Search across ALL clients because sub-clients may have different adminId
+  const myContactIds = new Set()
+  for (const cl of clients) {
+    for (const contact of (cl.portalContacts || [])) {
+      if (
+        contact.refClientId === c.id ||
+        (contact.email && contact.email.toLowerCase() === c.email.toLowerCase())
+      ) {
+        myContactIds.add(contact.id)
+        if (contact.businessId) myContactIds.add(contact.businessId)
+      }
+    }
+  }
+
+  // Collect all meetings where:
+  // 1. clientContactId OR serverContactId is in myContactIds
+  // 2. OR clientName/serverName matches fullName (fallback when contactId was not set)
+  // 3. OR contactNumber matches mobile (last resort fallback)
+  const myNameLower   = (c.fullName || c.businessName || '').toLowerCase().trim()
+  const myMobileTrim  = (c.mobile || '').trim()
+  const meetings = []
+  const seen = new Set()
+  for (const cl of clients) {
+    for (const m of (cl.portalMeetings || [])) {
+      if (seen.has(m.id)) continue
+      const byClientId = m.clientContactId && myContactIds.has(m.clientContactId)
+      const byServerId = m.serverContactId && myContactIds.has(m.serverContactId)
+      const byClientName = !m.clientContactId && myNameLower && (m.clientName || '').toLowerCase().trim() === myNameLower
+      const byServerName = !m.serverContactId && myNameLower && (m.serverName || '').toLowerCase().trim() === myNameLower
+      const byMobile     = myMobileTrim && (m.contactNumber || '').trim() === myMobileTrim
+      if (byClientId || byServerId || byClientName || byServerName || byMobile) {
+        seen.add(m.id)
+        meetings.push(m)
+      }
+    }
+  }
+  meetings.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  res.json({ meetings })
+})
+
 router.post('/meetings', async (req, res) => {
   const b = req.body || {}
   if (!b.agenda?.trim()) return res.status(400).json({ error: 'agenda is required' })
@@ -908,6 +957,97 @@ router.post('/meetings', async (req, res) => {
     updatedAt: now,
   }
   await patchClient(req, (cl) => ({ ...cl, portalMeetings: [...(cl.portalMeetings || []), item] }))
+
+  // Send email notifications
+  try {
+    const { clients } = await getState()
+    const tc = await myClient(req)
+    const fmtDt = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
+
+    // TC uses merged contacts (from linked business account)
+    // Normalize contacts so every entry has both `id` and `businessId` fields
+    let rawContacts = tc?.portalContacts || []
+    if (tc?.appId === 'ailocity-tc') {
+      rawContacts = tcMergedContacts(tc, clients)
+    }
+    // Ensure businessId is always set (mirrors what GET /contacts does)
+    const allContacts = rawContacts.map(x => ({ ...x, businessId: x.businessId || x.id }))
+
+    console.log('[Meeting Email] allContacts count:', allContacts.length)
+    console.log('[Meeting Email] clientContactId:', item.clientContactId)
+    console.log('[Meeting Email] serverContactId:', item.serverContactId)
+    console.log('[Meeting Email] assignBdId:', item.assignBdId)
+    if (allContacts.length > 0) {
+      console.log('[Meeting Email] Sample contact ids:', allContacts.slice(0,3).map(x => x.id + '|' + x.businessId + '|' + x.email))
+    }
+
+    const commonRows = [
+      ['Agenda',         item.agenda],
+      ['Scheduled At',   fmtDt(item.scheduledAt)],
+      ['Server',         item.serverName || '—'],
+      ['Client',         item.clientName || '—'],
+      ['BD Assigned',    item.assignBdName || '—'],
+      ['Disposition',    item.disposition],
+      ['Contact Person', item.contactPerson || '—'],
+      ['Contact No.',    item.contactNumber || '—'],
+      ['Status',         item.status],
+      ['Outcome',        item.outcome],
+    ]
+
+    const notifyServer = b.notifyServer !== false
+    const notifyClient = b.notifyClient !== false
+    const notifyBd     = b.notifyBd     !== false
+
+    console.log('[Meeting Email] notifyServer:', notifyServer, '| serverContactId:', item.serverContactId)
+    console.log('[Meeting Email] notifyClient:', notifyClient, '| clientContactId:', item.clientContactId)
+    console.log('[Meeting Email] notifyBd:', notifyBd, '| assignBdId:', item.assignBdId)
+    console.log('[Meeting Email] allContacts count:', allContacts.length)
+
+    // Email to server contact
+    if (notifyServer && item.serverContactId) {
+      const contact = allContacts.find(x => x.id === item.serverContactId || x.businessId === item.serverContactId)
+      console.log('[Meeting Email] Server contact found:', contact?.name, '| email:', contact?.email)
+      if (contact?.email) {
+        await sendMeetingEmail({
+          to: contact.email,
+          toName: contact.name,
+          subject: `Meeting Scheduled: ${item.agenda}`,
+          html: meetingEmailHtml({ title: 'New Meeting — You are invited as Server', rows: commonRows, note: '' }),
+        })
+      }
+    }
+
+    // Email to client contact
+    if (notifyClient && item.clientContactId) {
+      const contact = allContacts.find(x => x.id === item.clientContactId || x.businessId === item.clientContactId)
+      console.log('[Meeting Email] Client contact found:', contact?.name, '| email:', contact?.email)
+      if (contact?.email) {
+        await sendMeetingEmail({
+          to: contact.email,
+          toName: contact.name,
+          subject: `Meeting Scheduled: ${item.agenda}`,
+          html: meetingEmailHtml({ title: 'New Meeting — You are invited as Client', rows: commonRows, note: '' }),
+        })
+      }
+    }
+
+    // Email to BD
+    if (notifyBd && item.assignBdId) {
+      const bdClient = clients.find(x => x.id === item.assignBdId)
+      console.log('[Meeting Email] BD client found:', bdClient?.businessName, '| email:', bdClient?.email)
+      if (bdClient?.email) {
+        await sendMeetingEmail({
+          to: bdClient.email,
+          toName: bdClient.businessName || bdClient.fullName,
+          subject: `Meeting Assigned: ${item.agenda}`,
+          html: meetingEmailHtml({ title: 'Meeting Assigned to You', rows: commonRows, note: item.noteForBd }),
+        })
+      }
+    }
+  } catch (emailErr) {
+    console.error('[Meeting Email] Error:', emailErr?.message)
+  }
+
   res.status(201).json({ meeting: item })
 })
 
