@@ -1370,16 +1370,32 @@ router.post('/ai-fill', async (req, res) => {
   const { prompt } = req.body || {}
   if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' })
   const categoryList = Object.keys(CATEGORY_MAP).join(', ')
-  const systemPrompt = `You are a business data extraction assistant for an Indian CRM.
-Extract structured business info from user input and return ONLY valid JSON.
-Categories: ${categoryList}
-Sub-categories: ${JSON.stringify(CATEGORY_MAP)}
-Business types: Proprietorship, Partnership, Pvt Ltd, LLP, Other
-MBC type: client or server
-MBC sub-category: Startup - Inhouse, Startup - Outside, MSME, Big Enterprise, PSU, Others
-Return ONLY this JSON (empty string if unknown):
-{"name":"","company":"","businessType":"","category":"","subCategory":"","email":"","mobile":"","alternateMobile":"","websiteUrl":"","gstNumber":"","panNumber":"","address":"","city":"","state":"","pincode":"","country":"India","instagramUrl":"","facebookUrl":"","youtubeUrl":"","type":"client","mbcSubCategory":"","status":"active","notes":""}
-Return ONLY the JSON, no explanation.`
+  const subCatList = JSON.stringify(CATEGORY_MAP)
+  const systemPrompt = `You are an intelligent business data assistant for an Indian CRM system.
+Your job is to EXTRACT facts from the user input AND ALSO INTELLIGENTLY INFER missing fields based on context, common knowledge, and business type.
+
+RULES:
+- Extract every detail explicitly mentioned.
+- For fields NOT mentioned, use your knowledge to make a smart best-guess inference. For example:
+  - If business is a "pharmacy" in "Mumbai", infer state = "Maharashtra", country = "India", category = "Healthcare", subCategory = "Pharmacy", businessType = "Proprietorship" (most common for pharmacies).
+  - If a website is given, infer websiteUrl.
+  - If business sounds like a startup IT company, infer mbcSubCategory = "Startup - Inhouse" or "Startup - Outside".
+  - If city is known, infer the state.
+  - Always infer "notes" as a 1-2 sentence professional business description.
+- NEVER leave a field empty if you can reasonably infer it.
+- For "type": use "server" if the business provides services/products to other businesses, otherwise "client".
+
+VALID VALUES:
+- category: ${categoryList}
+- subCategory per category: ${subCatList}
+- businessType: Proprietorship, Partnership, Pvt Ltd, LLP, Other
+- type: client, server
+- mbcSubCategory: Startup - Inhouse, Startup - Outside, MSME, Big Enterprise, PSU, Others
+- status: active
+- country: India (default)
+
+Return ONLY this JSON with no extra text, no markdown, no explanation:
+{"name":"","company":"","businessType":"","category":"","subCategory":"","email":"","mobile":"","alternateMobile":"","websiteUrl":"","gstNumber":"","panNumber":"","address":"","city":"","state":"","pincode":"","country":"India","instagramUrl":"","facebookUrl":"","youtubeUrl":"","type":"client","mbcSubCategory":"","status":"active","notes":""}`
   try {
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
@@ -1387,7 +1403,7 @@ Return ONLY the JSON, no explanation.`
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt.trim() },
       ],
-      temperature: 0.2,
+      temperature: 0.3,
       max_tokens: 1024,
     })
     const text = completion.choices[0]?.message?.content || '{}'
