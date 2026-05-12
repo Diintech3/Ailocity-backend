@@ -31,7 +31,7 @@ const CATEGORY_MAP = {
 }
 
 const router = express.Router()
-router.use(requireAuth(['app', 'business']))
+router.use(requireAuth(['app', 'business', 'bd']))
 
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -728,31 +728,167 @@ router.delete('/datastore/:did', async (req, res) => {
   res.json({ ok: true })
 })
 
+// ── Lead assign: notify BD + copy lead to BD portal ─────────────────────────
+async function notifyAndCopyLeadToBD(lead, tcClient) {
+  const { clients } = await getState()
+  const { getBdUsers } = require('../store')
+
+  // Find which BD client owns this BD user
+  let bdClientTarget = null
+  let bdUserTarget = null
+
+  // assignedTo can be a BDU_ user id or a BD client id
+  if (lead.assignedTo.startsWith('BDU_')) {
+    const bdClients = clients.filter(x => x.appId === 'ailocity-bd')
+    for (const bdCl of bdClients) {
+      const users = await getBdUsers(bdCl.id)
+      const u = users.find(u => u.id === lead.assignedTo)
+      if (u) { bdClientTarget = bdCl; bdUserTarget = u; break }
+    }
+  } else {
+    bdClientTarget = clients.find(x => x.id === lead.assignedTo && x.appId === 'ailocity-bd')
+  }
+
+  if (!bdClientTarget) return
+
+  const notification = {
+    id: genId('notif'),
+    message: `📋 New Lead Assigned to You\n👤 Name: ${lead.name}\n📞 Mobile: ${lead.mobile || '—'}\n💰 Budget: ${lead.budget ? '₹' + lead.budget : '—'}\n🎯 Priority: ${lead.priority}\n📝 Requirement: ${lead.requirement || '—'}\n\n— ${lead.assignedBy || tcClient.businessName || 'TC'}`,
+    sentBy: tcClient.businessName || tcClient.fullName || 'TC',
+    sentAt: new Date().toISOString(),
+    read: false,
+    type: 'lead_assign',
+    leadId: lead.id,
+  }
+
+  // Copy lead to BD client's portalLeads (upsert by lead.id)
+  const bdLeadCopy = {
+    ...lead,
+    assignedByClientId: tcClient.id,
+    assignedBy: tcClient.businessName || tcClient.fullName || 'TC',
+    isCopiedFromTC: true,
+  }
+
+  const updatedBdClient = {
+    ...bdClientTarget,
+    portalNotifications: [notification, ...(bdClientTarget.portalNotifications || [])].slice(0, 100),
+    portalLeads: [
+      bdLeadCopy,
+      ...(bdClientTarget.portalLeads || []).filter(x => x.id !== lead.id),
+    ],
+  }
+  await persistOne('client', bdClientTarget.id, updatedBdClient)
+
+  // Send email to BD client
+  if (process.env.EMAIL_ENABLED === 'true') {
+    const fmtDt = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
+    await sendMeetingEmail({
+      to: bdClientTarget.email,
+      toName: bdClientTarget.businessName || bdClientTarget.fullName,
+      subject: `New Lead Assigned: ${lead.name}`,
+      html: meetingEmailHtml({
+        title: '📋 New Lead Assigned to You',
+        rows: [
+          ['Lead Name',    lead.name],
+          ['Mobile',       lead.mobile || '—'],
+          ['Email',        lead.email || '—'],
+          ['Source',       lead.source || '—'],
+          ['Budget',       lead.budget ? '₹' + lead.budget : '—'],
+          ['Priority',     lead.priority],
+          ['Status',       lead.status],
+          ['Requirement',  lead.requirement || '—'],
+          ['Follow Up',    lead.followUpDate ? fmtDt(lead.followUpDate) : '—'],
+          ['Assigned By',  lead.assignedBy || tcClient.businessName || 'TC'],
+          ['Assigned At',  fmtDt(lead.updatedAt)],
+        ],
+        note: lead.notes || '',
+      }),
+    })
+  }
+
+  console.log(`[Lead Assign] Lead ${lead.id} assigned to BD ${bdClientTarget.email}, notification sent`)
+}
+
 // ── Leads ─────────────────────────────────────────────────────────────────────
 router.get('/leads', async (req, res) => {
   const c = await myClient(req)
   if (!c) return res.status(404).json({ error: 'Client not found' })
-  res.json({ leads: c.portalLeads || [] })
+  const leads = (c.portalLeads || []).map(l => ({
+    ...l,
+    assignedTo:   l.assignedTo   ?? '',
+    assignedName: l.assignedName ?? '',
+    followUpDate: l.followUpDate ?? '',
+    notes:        l.notes        ?? '',
+    updatedAt:    l.updatedAt    ?? l.createdAt ?? '',
+  }))
+  res.json({ leads })
 })
 router.post('/leads', async (req, res) => {
   const b = req.body || {}
   if (!b.name?.trim()) return res.status(400).json({ error: 'name is required' })
-  const item = { id: genId('ld'), name: b.name.trim(), email: b.email?.trim() || '', mobile: b.mobile?.trim() || '', source: b.source?.trim() || 'Direct', requirement: b.requirement?.trim() || '', budget: b.budget?.trim() || '', status: b.status || 'new', priority: b.priority || 'medium', createdAt: new Date().toISOString() }
+  const now = new Date().toISOString()
+  const me = await myClient(req)
+  if (!me) return res.status(404).json({ error: 'Client not found' })
+  const item = {
+    id: genId('ld'),
+    name: b.name.trim(),
+    email: b.email?.trim() || '',
+    mobile: b.mobile?.trim() || '',
+    source: b.source?.trim() || 'Direct',
+    requirement: b.requirement?.trim() || '',
+    budget: b.budget?.trim() || '',
+    status: b.status || 'new',
+    priority: b.priority || 'medium',
+    assignedTo: b.assignedTo?.trim() || '',
+    assignedName: b.assignedName?.trim() || '',
+    followUpDate: b.followUpDate || '',
+    notes: b.notes?.trim() || '',
+    assignedBy: me.businessName || me.fullName || 'TC',
+    assignedByClientId: me.id,
+    createdAt: now,
+    updatedAt: now,
+  }
   await patchClient(req, (c) => ({ ...c, portalLeads: [...(c.portalLeads || []), item] }))
+
+  // If assigned to a BD user — notify BD + copy lead to BD portal
+  if (item.assignedTo) {
+    try {
+      await notifyAndCopyLeadToBD(item, me)
+    } catch (e) {
+      console.error('[Lead Assign]', e?.message)
+    }
+  }
+
   res.status(201).json({ lead: item })
 })
+
 router.patch('/leads/:lid', async (req, res) => {
   const b = req.body || {}
   let found = null
+  let prevAssignedTo = null
+  const me = await myClient(req)
+  if (!me) return res.status(404).json({ error: 'Client not found' })
+
   await patchClient(req, (c) => {
     const list = (c.portalLeads || []).map((x) => {
       if (x.id !== req.params.lid) return x
-      found = { ...x, ...b, id: x.id }
+      prevAssignedTo = x.assignedTo
+      found = { ...x, ...b, id: x.id, updatedAt: new Date().toISOString() }
       return found
     })
     return { ...c, portalLeads: list }
   })
   if (!found) return res.status(404).json({ error: 'Not found' })
+
+  // If assignedTo changed — notify new BD + copy/update lead
+  if (found.assignedTo && found.assignedTo !== prevAssignedTo) {
+    try {
+      await notifyAndCopyLeadToBD(found, me)
+    } catch (e) {
+      console.error('[Lead Assign]', e?.message)
+    }
+  }
+
   res.json({ lead: found })
 })
 router.delete('/leads/:lid', async (req, res) => {
@@ -761,6 +897,61 @@ router.delete('/leads/:lid', async (req, res) => {
 })
 
 // ── Campaigns ─────────────────────────────────────────────────────────────────
+// ── BD: update assigned lead + sync back to TC ──────────────────────────────
+router.patch('/leads/:lid/bd-update', async (req, res) => {
+  const b = req.body || {}
+  const me = await myClient(req)
+  if (!me) return res.status(404).json({ error: 'Client not found' })
+
+  let found = null
+  await patchClient(req, (c) => {
+    const list = (c.portalLeads || []).map((x) => {
+      if (x.id !== req.params.lid) return x
+      found = {
+        ...x,
+        ...(b.status       !== undefined ? { status:       b.status }       : {}),
+        ...(b.followUpDate !== undefined ? { followUpDate: b.followUpDate } : {}),
+        ...(b.bdNotes      !== undefined ? { bdNotes:      b.bdNotes }      : {}),
+        updatedAt: new Date().toISOString(),
+      }
+      return found
+    })
+    return { ...c, portalLeads: list }
+  })
+  if (!found) return res.status(404).json({ error: 'Lead not found' })
+
+  // Sync back to TC
+  try {
+    const { clients } = await getState()
+    const tcClient = clients.find(x => x.id === found.assignedByClientId)
+    if (tcClient) {
+      const updatedLeads = (tcClient.portalLeads || []).map(x =>
+        x.id === found.id
+          ? { ...x, status: found.status, followUpDate: found.followUpDate, bdNotes: found.bdNotes, updatedAt: found.updatedAt }
+          : x
+      )
+      const notification = {
+        id: genId('notif'),
+        message: `🔄 Lead Update by BD\n👤 Lead: ${found.name}\n📊 Status: ${found.status}\n📝 BD Notes: ${found.bdNotes || '—'}\n📅 Follow Up: ${found.followUpDate || '—'}\n\n— ${me.businessName || me.fullName || 'BD'}`,
+        sentBy: me.businessName || me.fullName || 'BD',
+        sentAt: new Date().toISOString(),
+        read: false,
+        type: 'lead_update',
+        leadId: found.id,
+      }
+      await persistOne('client', tcClient.id, {
+        ...tcClient,
+        portalLeads: updatedLeads,
+        portalNotifications: [notification, ...(tcClient.portalNotifications || [])].slice(0, 100),
+      })
+    }
+  } catch (e) {
+    console.error('[BD Lead Sync]', e?.message)
+  }
+
+  res.json({ lead: found })
+})
+
 router.get('/campaigns', async (req, res) => {
   const c = await myClient(req)
   if (!c) return res.status(404).json({ error: 'Client not found' })
@@ -883,7 +1074,7 @@ router.get('/tc-bd-assignees', async (req, res) => {
 // ── Meetings (TC) ────────────────────────────────────────────────────────────
 const MEETING_STATUS = ['pending', 'completed', 'cancelled']
 const MEETING_OUTCOME = ['waiting', 'positive', 'negative', 'neutral']
-const DISPOSITION = ['hot', 'warm']
+const DISPOSITION = ['hot', 'warm', 'cancelled']
 
 router.get('/meetings', async (req, res) => {
   const c = await myClient(req)
@@ -1415,6 +1606,102 @@ Return ONLY this JSON with no extra text, no markdown, no explanation:
     console.error('[AI Fill]', err?.message)
     res.status(500).json({ error: err?.message || 'AI fill failed' })
   }
+})
+
+// ── Telegram: send alert + save notification for all same-admin clients ──────
+router.post('/telegram/send-alert', async (req, res) => {
+  const { message } = req.body || {}
+  if (!message?.trim()) return res.status(400).json({ error: 'message is required' })
+  const tc = await myClient(req)
+  if (!tc) return res.status(404).json({ error: 'Client not found' })
+
+  const botToken = tc.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || ''
+  const chatId   = tc.telegramChatId   || process.env.TELEGRAM_CHAT_ID   || ''
+
+  let telegramOk = false
+  let telegramError = null
+  if (botToken && chatId) {
+    try {
+      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' }),
+      })
+      const tgData = await tgRes.json()
+      console.log('[Telegram Send] response:', JSON.stringify(tgData))
+      telegramOk = tgData.ok === true
+      if (!telegramOk) telegramError = tgData.description || 'Unknown Telegram error'
+    } catch (e) {
+      console.error('[Telegram Send] fetch error:', e?.message)
+      telegramError = e?.message
+    }
+  } else {
+    telegramError = `Missing config — botToken: ${!!botToken}, chatId: ${!!chatId}`
+    console.warn('[Telegram Send]', telegramError)
+  }
+
+  const { clients } = await getState()
+  const notification = {
+    id: genId('notif'),
+    message: message.trim(),
+    sentBy: tc.businessName || tc.fullName || 'TC',
+    sentAt: new Date().toISOString(),
+    read: false,
+  }
+  // Notify all clients across the entire system (not just same adminId)
+  // because TC, Business, BD may have different adminIds in some setups
+  // Exclude TC clients — lead assign notifications should not go to TC
+  const targetClients = clients.filter(
+    (c) => c.id !== tc.id &&
+    c.appId !== 'ailocity-tc' &&
+    ['ailocity', 'ailocity-business', 'ailocity-bd'].includes(c.appId)
+  )
+  await Promise.all(
+    targetClients.map((c) =>
+      persistOne('client', c.id, {
+        ...c,
+        portalNotifications: [notification, ...(c.portalNotifications || [])].slice(0, 100),
+      })
+    )
+  )
+  res.json({ ok: true, telegramOk, telegramError, notifiedCount: targetClients.length })
+})
+
+// ── Notifications: fetch + mark read ─────────────────────────────────────────
+router.get('/notifications', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  res.json({ notifications: c.portalNotifications || [] })
+})
+
+router.patch('/notifications/read-all', async (req, res) => {
+  await patchClient(req, (c) => ({
+    ...c,
+    portalNotifications: (c.portalNotifications || []).map((n) => ({ ...n, read: true })),
+  }))
+  res.json({ ok: true })
+})
+
+// ── Telegram Alert Settings ──────────────────────────────────────────────────
+router.get('/telegram/settings', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  res.json({
+    botToken: c.telegramBotToken || '',
+    chatId: c.telegramChatId || '',
+  })
+})
+
+router.post('/telegram/settings', async (req, res) => {
+  const { botToken, chatId } = req.body || {}
+  if (!botToken?.trim() || !chatId?.trim())
+    return res.status(400).json({ error: 'botToken and chatId are required' })
+  await patchClient(req, (c) => ({
+    ...c,
+    telegramBotToken: botToken.trim(),
+    telegramChatId: chatId.trim(),
+  }))
+  res.json({ ok: true })
 })
 
 module.exports = router

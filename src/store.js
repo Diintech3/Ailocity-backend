@@ -63,8 +63,7 @@ function docToClient(doc) {
     portalProducts: Array.isArray(c.portalProducts) ? c.portalProducts : [],
     portalContacts: Array.isArray(c.portalContacts) ? c.portalContacts : [],
     portalDataStore: Array.isArray(c.portalDataStore) ? c.portalDataStore : [],
-    portalLeads: Array.isArray(c.portalLeads) ? c.portalLeads : [],
-    portalCampaigns: Array.isArray(c.portalCampaigns) ? c.portalCampaigns : [],
+    portalLeads: Array.isArray(c.portalLeads) ? c.portalLeads : [],    portalCampaigns: Array.isArray(c.portalCampaigns) ? c.portalCampaigns : [],
     portalContent: Array.isArray(c.portalContent) ? c.portalContent : [],
     portalReels: Array.isArray(c.portalReels) ? c.portalReels : [],
     portalMeetings: Array.isArray(c.portalMeetings) ? c.portalMeetings : [],
@@ -72,6 +71,9 @@ function docToClient(doc) {
     portalDialCalls: Array.isArray(c.portalDialCalls) ? c.portalDialCalls : [],
     portalTcTrainings: Array.isArray(c.portalTcTrainings) ? c.portalTcTrainings : [],
     portalAICalls: Array.isArray(c.portalAICalls) ? c.portalAICalls : [],
+    portalNotifications: Array.isArray(c.portalNotifications) ? c.portalNotifications : [],
+    telegramBotToken: c.telegramBotToken ?? '',
+    telegramChatId: c.telegramChatId ?? '',
   }
 }
 
@@ -160,6 +162,9 @@ function toClientInsert(c) {
     portalDialCalls: c.portalDialCalls || [],
     portalTcTrainings: c.portalTcTrainings || [],
     portalAICalls: c.portalAICalls || [],
+    portalNotifications: c.portalNotifications || [],
+    telegramBotToken: c.telegramBotToken || '',
+    telegramChatId: c.telegramChatId || '',
   }
 }
 

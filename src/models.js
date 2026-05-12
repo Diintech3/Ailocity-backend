@@ -114,6 +114,9 @@ const clientSchema = new mongoose.Schema({
   portalDialCalls: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalTcTrainings: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalAICalls: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  portalNotifications: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  telegramBotToken: { type: String, default: '' },
+  telegramChatId: { type: String, default: '' },
 })
 
 clientSchema.index({ email: 1, appId: 1 }, { unique: true })
