@@ -1704,4 +1704,134 @@ router.post('/telegram/settings', async (req, res) => {
   res.json({ ok: true })
 })
 
+// ── Team Members ─────────────────────────────────────────────────────────────
+const TEAM_ROLES_VALID = ['Director', 'Manager', 'Executor', 'TC', 'BD', 'Field Agent', 'Support', 'Trainer', 'Other']
+
+router.get('/team-members', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  res.json({ members: c.portalTeamMembers || [] })
+})
+
+router.get('/team-members/stats', async (req, res) => {
+  const c = await myClient(req)
+  if (!c) return res.status(404).json({ error: 'Client not found' })
+  const members = c.portalTeamMembers || []
+  const byRole = {}
+  const byDepartment = {}
+  for (const m of members) {
+    byRole[m.role] = (byRole[m.role] || 0) + 1
+    byDepartment[m.department] = (byDepartment[m.department] || 0) + 1
+  }
+  res.json({
+    total: members.length,
+    active: members.filter((m) => m.status === 'active').length,
+    inactive: members.filter((m) => m.status === 'inactive').length,
+    byRole,
+    byDepartment,
+  })
+})
+
+router.post('/team-members', async (req, res) => {
+  const me = await myClient(req)
+  if (!me) return res.status(404).json({ error: 'Client not found' })
+  const b = req.body || {}
+  if (!b.name?.trim()) return res.status(400).json({ error: 'name is required' })
+  const role = TEAM_ROLES_VALID.includes(b.role) ? b.role : 'TC'
+  const status = ['active', 'inactive'].includes(b.status) ? b.status : 'active'
+  const now = new Date().toISOString()
+  const item = {
+    id: genId('tm'),
+    name: b.name.trim(),
+    email: String(b.email || '').trim(),
+    mobile: String(b.mobile || '').trim(),
+    role,
+    department: String(b.department || 'Sales').trim(),
+    city: String(b.city || '').trim(),
+    address: String(b.address || '').trim(),
+    status,
+    joiningDate: String(b.joiningDate || '').trim(),
+    notes: String(b.notes || '').trim(),
+    imageUrl: String(b.imageUrl || '').trim(),
+    reportingTo: String(b.reportingTo || '').trim(),
+    employeeId: String(b.employeeId || '').trim(),
+    designation: String(b.designation || '').trim(),
+    leadsCount: 0,
+    meetingsCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await patchClient(req, (c) => ({
+    ...c,
+    portalTeamMembers: [...(c.portalTeamMembers || []), item],
+  }))
+  res.status(201).json({ member: item })
+})
+
+router.patch('/team-members/:mid', async (req, res) => {
+  const b = req.body || {}
+  let found = null
+  await patchClient(req, (c) => {
+    const list = (c.portalTeamMembers || []).map((x) => {
+      if (x.id !== req.params.mid) return x
+      const role = b.role != null ? (TEAM_ROLES_VALID.includes(b.role) ? b.role : x.role) : x.role
+      const status = b.status != null ? (['active', 'inactive'].includes(b.status) ? b.status : x.status) : x.status
+      found = {
+        ...x,
+        ...(b.name?.trim() ? { name: b.name.trim() } : {}),
+        ...(b.email !== undefined ? { email: String(b.email).trim() } : {}),
+        ...(b.mobile !== undefined ? { mobile: String(b.mobile).trim() } : {}),
+        ...(b.role !== undefined ? { role } : {}),
+        ...(b.department !== undefined ? { department: String(b.department).trim() } : {}),
+        ...(b.city !== undefined ? { city: String(b.city).trim() } : {}),
+        ...(b.address !== undefined ? { address: String(b.address).trim() } : {}),
+        ...(b.status !== undefined ? { status } : {}),
+        ...(b.joiningDate !== undefined ? { joiningDate: String(b.joiningDate).trim() } : {}),
+        ...(b.notes !== undefined ? { notes: String(b.notes).trim() } : {}),
+        ...(b.imageUrl !== undefined ? { imageUrl: String(b.imageUrl).trim() } : {}),
+        ...(b.reportingTo !== undefined ? { reportingTo: String(b.reportingTo).trim() } : {}),
+        ...(b.employeeId !== undefined ? { employeeId: String(b.employeeId).trim() } : {}),
+        ...(b.designation !== undefined ? { designation: String(b.designation).trim() } : {}),
+        updatedAt: new Date().toISOString(),
+      }
+      return found
+    })
+    return { ...c, portalTeamMembers: list }
+  })
+  if (!found) return res.status(404).json({ error: 'Team member not found' })
+  res.json({ member: found })
+})
+
+router.patch('/team-members/:mid/performance', async (req, res) => {
+  const b = req.body || {}
+  let found = null
+  await patchClient(req, (c) => {
+    const list = (c.portalTeamMembers || []).map((x) => {
+      if (x.id !== req.params.mid) return x
+      found = {
+        ...x,
+        ...(b.leadsCount !== undefined ? { leadsCount: Number(b.leadsCount) || 0 } : {}),
+        ...(b.meetingsCount !== undefined ? { meetingsCount: Number(b.meetingsCount) || 0 } : {}),
+        updatedAt: new Date().toISOString(),
+      }
+      return found
+    })
+    return { ...c, portalTeamMembers: list }
+  })
+  if (!found) return res.status(404).json({ error: 'Team member not found' })
+  res.json({ member: found })
+})
+
+router.delete('/team-members/:mid', async (req, res) => {
+  let ok = false
+  await patchClient(req, (c) => {
+    const prev = c.portalTeamMembers || []
+    const next = prev.filter((x) => x.id !== req.params.mid)
+    ok = next.length !== prev.length
+    return { ...c, portalTeamMembers: next }
+  })
+  if (!ok) return res.status(404).json({ error: 'Team member not found' })
+  res.json({ ok: true })
+})
+
 module.exports = router

@@ -110,6 +110,7 @@ const clientSchema = new mongoose.Schema({
   portalContent: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalReels: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalMeetings: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  portalTeamMembers: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalDialReports: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalDialCalls: { type: [mongoose.Schema.Types.Mixed], default: [] },
   portalTcTrainings: { type: [mongoose.Schema.Types.Mixed], default: [] },
