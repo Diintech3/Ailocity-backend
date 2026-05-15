@@ -326,6 +326,7 @@ async function getTerritoryTree() {
                 podNumber: p.podNumber,
                 podName: p.podName,
                 capacity: p.capacity,
+                pincodes: p.pincodes || [],
               }))
           }))
       }))

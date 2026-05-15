@@ -26,6 +26,7 @@ const podSchema = new mongoose.Schema({
   podNumber: { type: String, required: true },   // e.g. "POD-001"
   podName:   { type: String, required: true },   // e.g. "Sector 14-28"
   capacity:  { type: Number, default: 100 },
+  pincodes:  { type: [String], default: [] },    // e.g. ["110001", "110002"]
   isActive:  { type: Boolean, default: true },
   createdAt: { type: String, required: true },
 })

@@ -11,7 +11,7 @@
   "license": "ISC",
   "description": "Ailocity API — superadmin, admin, client",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1042.0",
+    "@aws-sdk/client-s3": "^3.1047.0",
     "@aws-sdk/s3-request-presigner": "^3.1042.0",
     "@getbrevo/brevo": "^5.0.4",
     "bcryptjs": "^3.0.2",

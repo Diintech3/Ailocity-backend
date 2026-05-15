@@ -59,6 +59,16 @@ router.get('/presigned-url', async (req, res) => {
   }
 })
 
+// ── GeoJSON presigned URL (private R2) ───────────────────────────────────────
+router.get('/geo/boundaries-url', async (req, res) => {
+  try {
+    const url = await getPresignedUrl('static/pincode-boundaries.geojson', 3600)
+    res.json({ url })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to generate GeoJSON URL' })
+  }
+})
+
 
 
 async function myClient(req) {
@@ -118,12 +128,32 @@ router.post('/territories/regions', async (req, res) => {
 
 router.post('/territories/pods', async (req, res) => {
   try {
-    const { stateId, cityId, regionId, podNumber, podName, capacity } = req.body
+    const { stateId, cityId, regionId, podNumber, podName, capacity, pincodes } = req.body
     if (!stateId || !cityId || !regionId || !podNumber?.trim() || !podName?.trim())
       return res.status(400).json({ error: 'stateId, cityId, regionId, podNumber and podName are required' })
-    const data = { id: genId('pd'), stateId, cityId, regionId, podNumber: podNumber.trim().toUpperCase(), podName: podName.trim(), capacity: capacity || 100, isActive: true, createdAt: new Date().toISOString() }
+    const parsedPincodes = Array.isArray(pincodes)
+      ? pincodes.map(p => String(p).trim()).filter(Boolean)
+      : (pincodes ? String(pincodes).split(',').map(p => p.trim()).filter(Boolean) : [])
+    const data = { id: genId('pd'), stateId, cityId, regionId, podNumber: podNumber.trim().toUpperCase(), podName: podName.trim(), capacity: capacity || 100, pincodes: parsedPincodes, isActive: true, createdAt: new Date().toISOString() }
     await createPod(data)
     res.json({ pod: data })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.patch('/territories/pods/:podId', async (req, res) => {
+  try {
+    const { Pod } = require('../models')
+    const { pincodes } = req.body
+    const parsed = Array.isArray(pincodes)
+      ? pincodes.map(p => String(p).trim()).filter(Boolean)
+      : (pincodes ? String(pincodes).split(',').map(p => p.trim()).filter(Boolean) : [])
+    const pod = await Pod.findOneAndUpdate(
+      { id: req.params.podId },
+      { $set: { pincodes: parsed } },
+      { new: true }
+    )
+    if (!pod) return res.status(404).json({ error: 'Pod not found' })
+    res.json({ pod })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
