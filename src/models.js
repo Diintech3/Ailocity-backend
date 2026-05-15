@@ -147,6 +147,74 @@ const bdUserSchema = new mongoose.Schema({
 bdUserSchema.index({ email: 1, bdClientId: 1 }, { unique: true })
 bdUserSchema.index({ bdClientId: 1 })
 
+const pmFolderSchema = new mongoose.Schema({
+  id:          { type: String, required: true, unique: true },
+  pmClientId:  { type: String, required: true },
+  name:        { type: String, required: true },
+  category:    { type: String, default: '' },
+  subCategory: { type: String, default: '' },
+  color:       { type: String, default: '#FF7A00' },
+  createdAt:   { type: String, required: true },
+})
+pmFolderSchema.index({ pmClientId: 1 })
+
+const pmLeadSchema = new mongoose.Schema({
+  id:              { type: String, required: true, unique: true },
+  pmClientId:      { type: String, required: true },   // PM user ka client ID
+  // Business Info
+  name:            { type: String, required: true },
+  company:         { type: String, default: '' },
+  logoKey:         { type: String, default: '' },
+  businessType:    { type: String, default: '' },
+  category:        { type: String, default: '' },
+  subCategory:     { type: String, default: '' },
+  websiteUrl:      { type: String, default: '' },
+  // Contact
+  email:           { type: String, default: '' },
+  mobile:          { type: String, default: '' },
+  alternateMobile: { type: String, default: '' },
+  // Documents
+  gstNumber:       { type: String, default: '' },
+  panNumber:       { type: String, default: '' },
+  // Location
+  address:         { type: String, default: '' },
+  city:            { type: String, default: '' },
+  state:           { type: String, default: '' },
+  pincode:         { type: String, default: '' },
+  country:         { type: String, default: 'India' },
+  // Social
+  instagramUrl:    { type: String, default: '' },
+  facebookUrl:     { type: String, default: '' },
+  youtubeUrl:      { type: String, default: '' },
+  // CRM
+  type:            { type: String, default: 'hot' },      // hot | warm | cold | qualified | client
+  mbcSubCategory:  { type: String, default: '' },         // B2B | B2C | Enterprise | SME | Startup | Others
+  source:          { type: String, default: 'Direct' },
+  requirement:     { type: String, default: '' },
+  budget:          { type: String, default: '' },
+  status:          { type: String, default: 'new' },      // new | contacted | qualified | lost
+  priority:        { type: String, default: 'medium' },   // high | medium | low
+  kyc:             { type: String, default: 'pending' },
+  notes:           { type: String, default: '' },
+  createdAt:       { type: String, required: true },
+  folderId:        { type: String, default: '' },
+  updatedAt:       { type: String, required: true },
+})
+pmLeadSchema.index({ pmClientId: 1 })
+pmLeadSchema.index({ pmClientId: 1, status: 1 })
+
+const pmProjectSchema = new mongoose.Schema({
+  id:        { type: String, required: true, unique: true },
+  name:      { type: String, required: true },
+  client:    { type: String, default: '' },
+  budget:    { type: String, default: '' },
+  startDate: { type: String, default: '' },
+  endDate:   { type: String, default: '' },
+  status:    { type: String, default: 'active' },
+  notes:     { type: String, default: '' },
+  createdAt: { type: String, required: true },
+})
+
 const App    = mongoose.models.App    || mongoose.model('App',    appSchema)
 const Admin  = mongoose.models.Admin  || mongoose.model('Admin',  adminSchema)
 const Client = mongoose.models.Client || mongoose.model('Client', clientSchema)
@@ -154,6 +222,9 @@ const BdUser = mongoose.models.BdUser || mongoose.model('BdUser', bdUserSchema)
 const State  = mongoose.models.State  || mongoose.model('State',  stateSchema)
 const City   = mongoose.models.City   || mongoose.model('City',   citySchema)
 const Region = mongoose.models.Region || mongoose.model('Region', regionSchema)
-const Pod    = mongoose.models.Pod    || mongoose.model('Pod',    podSchema)
+const Pod       = mongoose.models.Pod       || mongoose.model('Pod',       podSchema)
+const PmProject = mongoose.models.PmProject || mongoose.model('PmProject', pmProjectSchema)
+const PmLead    = mongoose.models.PmLead    || mongoose.model('PmLead',    pmLeadSchema)
+const PmFolder  = mongoose.models.PmFolder  || mongoose.model('PmFolder',  pmFolderSchema)
 
-module.exports = { App, Admin, Client, BdUser, State, City, Region, Pod }
+module.exports = { App, Admin, Client, BdUser, State, City, Region, Pod, PmProject, PmLead, PmFolder }

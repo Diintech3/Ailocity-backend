@@ -31,7 +31,7 @@ const CATEGORY_MAP = {
 }
 
 const router = express.Router()
-router.use(requireAuth(['app', 'business', 'bd']))
+router.use(requireAuth(['app', 'business', 'bd', 'pm', 'tc']))
 
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -593,7 +593,7 @@ router.post('/contacts/:cid/login', async (req, res) => {
   const refClient = state.clients.find((x) => x.id === refClientId)
   if (!refClient) return res.status(404).json({ error: 'Linked client account not found' })
 
-  const APP_ROLE = { 'ailocity': 'app', 'ailocity-business': 'business', 'ailocity-bd': 'bd', 'ailocity-tc': 'app' }
+  const APP_ROLE = { 'ailocity': 'app', 'ailocity-business': 'business', 'ailocity-bd': 'bd', 'ailocity-tc': 'tc', 'ailocity-pm': 'pm' }
   const token = sign({
     role: APP_ROLE[refClient.appId] || 'app',
     sub: refClient.id,

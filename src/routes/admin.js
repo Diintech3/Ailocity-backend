@@ -229,7 +229,7 @@ router.patch('/apps/:id', async (req, res) => {
       ? { status: b.status }
       : {}),
     ...(Number.isFinite(Number(b.creditsBalance)) ? { creditsBalance: Number(b.creditsBalance) } : {}),
-    ...(['ailocity', 'ailocity-bd', 'ailocity-business', 'ailocity-tc'].includes(b.appId) ? { appId: b.appId } : {}),
+    ...(['ailocity', 'ailocity-bd', 'ailocity-business', 'ailocity-tc', 'ailocity-pm'].includes(b.appId) ? { appId: b.appId } : {}),
   }
   await persistOne('client', next.id, next)
   res.json({ client: publicClientRow(next) })
@@ -249,7 +249,7 @@ router.post('/apps/:id/impersonate', async (req, res) => {
   const state = await getState()
   const client = state.clients.find((c) => c.id === req.params.id && c.adminId === adminId)
   if (!client) return res.status(404).json({ error: 'Client not found' })
-  const APP_ROLE = { 'ailocity': 'app', 'ailocity-business': 'business', 'ailocity-bd': 'bd', 'ailocity-tc': 'app' }
+  const APP_ROLE = { 'ailocity': 'app', 'ailocity-business': 'business', 'ailocity-bd': 'bd', 'ailocity-tc': 'app', 'ailocity-pm': 'app' }
   const token = sign({
     role: APP_ROLE[client.appId] || 'app',
     sub: client.id,

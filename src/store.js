@@ -9,6 +9,7 @@ const defaultApps = [
   { id: 'ailocity-bd', name: 'Ailocity BD' },
   { id: 'ailocity-business', name: 'Ailocity Business' },
   { id: 'ailocity-tc', name: 'Ailocity TC' },
+  { id: 'ailocity-pm', name: 'Ailocity PM' },
 ]
 
 const JSON_LEGACY_PATH = path.join(__dirname, '..', 'data', 'db.json')

@@ -69,6 +69,7 @@ function registerRoutes(app) {
   app.use('/api/admin',       require('./src/routes/admin'))
   app.use('/api/business',      require('./src/routes/businessPortal'))
   app.use('/api/bd',          require('./src/routes/bdPortal'))
+  app.use('/api/pm',          require('./src/routes/pmPortal'))
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
